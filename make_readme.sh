@@ -1,0 +1,1 @@
+poetry run jupyter nbconvert demo.ipynb --to markdown --output README

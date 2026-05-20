@@ -31,7 +31,7 @@ def _format_log_message(operation: str, message: str, ts: str | None = None) -> 
 
 def _ensure_log_container(adata: ad.AnnData) -> pd.DataFrame:
     current = adata.uns.get(LOG_KEY)
-    if not isinstance(current, list):
+    if not isinstance(current, pd.DataFrame):
         adata.uns[LOG_KEY] = pd.DataFrame(columns=["Time","Operation","Message"])
     return adata.uns[LOG_KEY]
 

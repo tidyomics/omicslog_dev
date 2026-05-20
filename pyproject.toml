@@ -2,11 +2,12 @@
 name = "omicslog"
 version = "0.1.0"
 description = "AnnData subclass that automatically logs mutations to .uns['_omicslog']"
-authors = ["Your Name <you@example.com>"]
+authors = ["Stefano Mangiola <stefano.mangiola@adelaide.edu.au>", "Juan Henao <juanhenao.sanchez@gmail.com>"]
+manteiners = ["Juan Henao <juanhenao.sanchez@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/your-org/omicslog"
-repository = "https://github.com/your-org/omicslog"
+homepage = "https://github.com/tidyomics/omicslog_dev"
+repository = "https://github.com/tidyomics/omicslog_dev"
 keywords = ["bioinformatics", "single-cell", "anndata", "logging"]
 classifiers = [
     "Programming Language :: Python :: 3",
