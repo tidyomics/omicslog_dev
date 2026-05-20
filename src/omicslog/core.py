@@ -6,42 +6,52 @@ from datetime import datetime
 from typing import Any
 
 import anndata as ad
+import pandas as pd
 
 LOG_KEY = "_omicslog"
+
+def _safe_deepcopy_dict(d: dict) -> dict:
+    result = {}
+    for k, v in d.items():
+        try:
+            result[k] = deepcopy(v)
+        except (TypeError, Exception):
+            pass
+    return result
 
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _format_log_message(operation: str, message: str, ts: str | None = None) -> str:
+def _format_log_message(operation: str, message: str, ts: str | None = None) -> list[str]:
     stamp = ts or _timestamp()
-    return f"[{stamp}] {operation}: {message}"
+    return [stamp, operation, message]
 
 
-def _ensure_log_container(adata: ad.AnnData) -> list[str]:
+def _ensure_log_container(adata: ad.AnnData) -> pd.DataFrame:
     current = adata.uns.get(LOG_KEY)
     if not isinstance(current, list):
-        adata.uns[LOG_KEY] = []
+        adata.uns[LOG_KEY] = pd.DataFrame(columns=["Time","Operation","Message"])
     return adata.uns[LOG_KEY]
 
 
 def _append_log_messages(adata: ad.AnnData, messages: list[str] | tuple[str, ...]) -> None:
     if not messages:
         return
-    _ensure_log_container(adata).extend(messages)
-
+    container = _ensure_log_container(adata)
+    new_rows = pd.DataFrame(messages, columns=["Time", "Operation", "Message"])
+    adata.uns[LOG_KEY] = pd.concat([container, new_rows], ignore_index=True)
 
 def _inherit_and_append(
     parent: ad.AnnData,
     child: ad.AnnData,
     messages: list[str] | tuple[str, ...],
 ) -> None:
-    child.uns[LOG_KEY] = list(_ensure_log_container(parent))
+    child.uns[LOG_KEY] = _ensure_log_container(parent)
     _append_log_messages(child, messages)
 
-
-def _parent_set(obj: Any, attr: str, value: Any) -> None:
+def _parent_set(obj, attr: str, value) -> None:
     """Set an attribute via the first parent class that defines it.
     Works for both plain properties (.fset) and custom descriptors (.__set__).
     """
@@ -51,18 +61,18 @@ def _parent_set(obj: Any, attr: str, value: Any) -> None:
             return
     object.__setattr__(obj, attr, value)
 
-
 class _LoggingProxy:
-    """Transparent proxy for dict-like AnnData components.
+    """
+    Transparent proxy for dict-like AnnData components (layers, obsm, varm, ...).
     Intercepts __setitem__ and __delitem__ to log mutations automatically.
     """
 
-    def __init__(self, wrapped: Any, owner: "LoggedAnnDataStandalone", label: str):
+    def __init__(self, wrapped, owner: "LoggedAnnDataStandalone", label: str):
         object.__setattr__(self, "_w", wrapped)
         object.__setattr__(self, "_owner", owner)
         object.__setattr__(self, "_label", label)
 
-    def __setitem__(self, key: str, value: Any) -> None:
+    def __setitem__(self, key: str, value) -> None:
         w = object.__getattribute__(self, "_w")
         owner = object.__getattribute__(self, "_owner")
         label = object.__getattribute__(self, "_label")
@@ -77,29 +87,28 @@ class _LoggingProxy:
         del w[key]
         _append_log_messages(owner, [_format_log_message(label, f"'{key}' removed")])
 
-    def __getitem__(self, key: Any) -> Any:
+    def __getitem__(self, key):
         return object.__getattribute__(self, "_w")[key]
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name):
         return getattr(object.__getattribute__(self, "_w"), name)
 
-    def __contains__(self, key: Any) -> bool:
+    def __contains__(self, key):
         return key in object.__getattribute__(self, "_w")
 
     def __iter__(self):
         return iter(object.__getattribute__(self, "_w"))
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(object.__getattribute__(self, "_w"))
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return repr(object.__getattribute__(self, "_w"))
 
 
 @dataclass
 class AnnDataSnapshot:
-    """Captures the key state of an AnnData object for diffing."""
-
+    """Captures the full state of an AnnData object for diffing."""
     n_obs: int
     n_vars: int
     obs_cols: list[str] = field(default_factory=list)
@@ -178,14 +187,14 @@ def _subset_messages(
 
 
 class LoggedAnnDataStandalone(ad.AnnData):
-    """AnnData subclass that automatically logs mutations to .uns['_omicslog']."""
+    """Standalone subclass strategy with local logging helpers and message style."""
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         _ensure_log_container(self)
 
     @classmethod
-    def _safe_component_copy(cls, value: Any) -> Any:
+    def _safe_component_copy(cls, value):
         return value.copy() if hasattr(value, "copy") else deepcopy(value)
 
     @classmethod
@@ -198,13 +207,14 @@ class LoggedAnnDataStandalone(ad.AnnData):
             "X": cls._safe_component_copy(adata.X) if adata.X is not None else None,
             "obs": adata.obs.copy(),
             "var": adata.var.copy(),
-            "uns": deepcopy(dict(adata.uns)),
+            "uns": _safe_deepcopy_dict(dict(adata.uns)),
             "obsm": {k: cls._safe_component_copy(v) for k, v in adata.obsm.items()},
             "varm": {k: cls._safe_component_copy(v) for k, v in adata.varm.items()},
             "layers": {k: cls._safe_component_copy(v) for k, v in adata.layers.items()},
             "obsp": {k: cls._safe_component_copy(v) for k, v in adata.obsp.items()},
             "varp": {k: cls._safe_component_copy(v) for k, v in adata.varp.items()},
         }
+        
         if adata.raw is not None:
             kwargs["raw"] = {
                 "X": cls._safe_component_copy(adata.raw.X),
@@ -216,14 +226,14 @@ class LoggedAnnDataStandalone(ad.AnnData):
         _ensure_log_container(logged)
         return logged
 
-    # --- proxied properties: intercept direct dict-style mutations ---
+    # --- proxied properties: each needs a getter AND a setter ---
 
     @property
     def layers(self):
         return _LoggingProxy(super().layers, self, "layers")
 
     @layers.setter
-    def layers(self, value: Any) -> None:
+    def layers(self, value):
         _parent_set(self, "layers", value)
 
     @property
@@ -231,7 +241,7 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().obsm, self, "obsm")
 
     @obsm.setter
-    def obsm(self, value: Any) -> None:
+    def obsm(self, value):
         _parent_set(self, "obsm", value)
 
     @property
@@ -239,7 +249,7 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().varm, self, "varm")
 
     @varm.setter
-    def varm(self, value: Any) -> None:
+    def varm(self, value):
         _parent_set(self, "varm", value)
 
     @property
@@ -247,7 +257,7 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().obsp, self, "obsp")
 
     @obsp.setter
-    def obsp(self, value: Any) -> None:
+    def obsp(self, value):
         _parent_set(self, "obsp", value)
 
     @property
@@ -255,7 +265,7 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().varp, self, "varp")
 
     @varp.setter
-    def varp(self, value: Any) -> None:
+    def varp(self, value):
         _parent_set(self, "varp", value)
 
     @property
@@ -263,7 +273,7 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().obs, self, "obs")
 
     @obs.setter
-    def obs(self, value: Any) -> None:
+    def obs(self, value):
         _parent_set(self, "obs", value)
 
     @property
@@ -271,15 +281,15 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return _LoggingProxy(super().var, self, "var")
 
     @var.setter
-    def var(self, value: Any) -> None:
-        _parent_set(self, "var", value)
+    def var(self, value):
+        ad.AnnData.var.fset(self, value)
 
     # --- snapshot & subsetting ---
 
     def _snapshot(self) -> AnnDataSnapshot:
         return AnnDataSnapshot.from_anndata(self)
 
-    def __getitem__(self, index: Any) -> "LoggedAnnDataStandalone":
+    def __getitem__(self, index):
         pre = self._snapshot()
         result = super().__getitem__(index)
         logged_result = self.from_anndata(result)
@@ -287,13 +297,18 @@ class LoggedAnnDataStandalone(ad.AnnData):
         _inherit_and_append(self, logged_result, msgs)
         return logged_result
 
-    def _inplace_subset(self, index: Any) -> None:
+    def _inplace_subset(self, index):
         pre = self._snapshot()
         super()._inplace_subset(index)
         _append_log_messages(self, _subset_messages(pre, self._snapshot(), operation="subset"))
 
     def _operation_log_block(self) -> str:
         logs = self.uns.get(LOG_KEY, [])
+        if isinstance(logs, pd.DataFrame):
+            if logs.empty:
+                return ""
+            rows = logs.apply(lambda r: f"[{r['Time']}] {r['Operation']}: {r['Message']}", axis=1)
+            return "\n\nOperation log:\n" + "\n".join(rows)
         if not logs:
             return ""
         return "\n\nOperation log:\n" + "\n".join(str(x) for x in logs)
@@ -309,5 +324,4 @@ class LoggedAnnDataStandalone(ad.AnnData):
 
 
 def log_start(adata: ad.AnnData) -> LoggedAnnDataStandalone:
-    """Convert an AnnData object into a LoggedAnnDataStandalone instance."""
     return LoggedAnnDataStandalone.from_anndata(adata)
