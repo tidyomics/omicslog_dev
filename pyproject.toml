@@ -1,20 +1,33 @@
 [tool.poetry]
-name = "project"
+name = "omicslog"
 version = "0.1.0"
-description = "CompBio template: Python (Poetry) + R (renv) in separate devcontainers"
-authors = ["Your Name <you@example.com>"]
+description = "AnnData subclass that automatically logs mutations to .uns['_omicslog']"
+authors = ["Stefano Mangiola <stefano.mangiola@adelaide.edu.au>", "Juan Henao <juanhenao.sanchez@gmail.com>"]
+manteiners = ["Juan Henao <juanhenao.sanchez@gmail.com>"]
+license = "MIT"
 readme = "README.md"
-package-mode = false
+homepage = "https://github.com/tidyomics/omicslog_dev"
+repository = "https://github.com/tidyomics/omicslog_dev"
+keywords = ["bioinformatics", "single-cell", "anndata", "logging"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+packages = [{include = "omicslog", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.12"
+anndata = ">=0.10"
 numpy = "^2.0.0"
-scikit-learn = "^1.5.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.6.0"
 black = "^24.8.0"
 ipykernel = "^7.2.0"
+pytest = "^8.0.0"
+scipy = "^1.14.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -25,4 +38,3 @@ line-length = 100
 
 [tool.black]
 line-length = 100
-
