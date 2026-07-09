@@ -284,6 +284,39 @@ class LoggedAnnDataStandalone(ad.AnnData):
     def var(self, value):
         ad.AnnData.var.fset(self, value)
 
+    def _unwrap(self) -> ad.AnnData:
+        """Plain AnnData view of the real underlying data, without the logging proxies.
+
+        anndata's writers use `type(elem)` to look up a serializer, and don't
+        recognize `_LoggingProxy`, so the proxies must be unwrapped before writing.
+        """
+        return ad.AnnData(
+            X=super().X,
+            obs=super().obs,
+            var=super().var,
+            uns=self.uns,
+            obsm=dict(super().obsm),
+            varm=dict(super().varm),
+            layers=dict(super().layers),
+            obsp=dict(super().obsp),
+            varp=dict(super().varp),
+            raw=self.raw,
+        )
+
+    def write_h5ad(self, filename=None, **kwargs):
+        return self._unwrap().write_h5ad(filename, **kwargs)
+
+    write = write_h5ad
+
+    def write_loom(self, filename, **kwargs):
+        return self._unwrap().write_loom(filename, **kwargs)
+
+    def write_zarr(self, store, **kwargs):
+        return self._unwrap().write_zarr(store, **kwargs)
+
+    def write_csvs(self, dirname, **kwargs):
+        return self._unwrap().write_csvs(dirname, **kwargs)
+
     # --- snapshot & subsetting ---
 
     def _snapshot(self) -> AnnDataSnapshot:
@@ -325,3 +358,4 @@ class LoggedAnnDataStandalone(ad.AnnData):
 
 def log_start(adata: ad.AnnData) -> LoggedAnnDataStandalone:
     return LoggedAnnDataStandalone.from_anndata(adata)
+
