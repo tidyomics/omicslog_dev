@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "omicslog"
-version = "0.1.0"
+version = "0.2.0"
 description = "AnnData subclass that automatically logs mutations to .uns['_omicslog']"
 authors = ["Stefano Mangiola <stefano.mangiola@adelaide.edu.au>", "Juan Henao <juanhenao.sanchez@gmail.com>"]
 manteiners = ["Juan Henao <juanhenao.sanchez@gmail.com>"]

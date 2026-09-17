@@ -61,6 +61,46 @@ def _parent_set(obj, attr: str, value) -> None:
             return
     object.__setattr__(obj, attr, value)
 
+class _LoggingDataFrame(pd.DataFrame):
+    """DataFrame subclass that logs column mutations to the owning AnnData.
+
+    Passes anndata's `isinstance(_, pd.DataFrame)` accessor checks (unlike a
+    generic proxy) while still intercepting __setitem__/__delitem__.
+    """
+    _metadata = ["_owner", "_label"]
+
+    @property
+    def _constructor(self):
+        # derived frames (slices, ops) are plain DataFrames, not logged
+        return pd.DataFrame
+
+    def __setitem__(self, key, value):
+        owner = object.__getattribute__(self, "_owner")
+        label = object.__getattribute__(self, "_label")
+        existing = self.columns
+        verb = "updated" if (isinstance(key, str) and key in existing) else "added"
+        super().__setitem__(key, value)
+        # write through to the real container on the AnnData
+        ad.AnnData.obs.fset(owner, pd.DataFrame(self)) if label == "obs" \
+            else ad.AnnData.var.fset(owner, pd.DataFrame(self))
+        if isinstance(key, str):
+            _append_log_messages(owner, [_format_log_message(label, f"'{key}' {verb}")])
+
+    def __delitem__(self, key):
+        owner = object.__getattribute__(self, "_owner")
+        label = object.__getattribute__(self, "_label")
+        super().__delitem__(key)
+        ad.AnnData.obs.fset(owner, pd.DataFrame(self)) if label == "obs" \
+            else ad.AnnData.var.fset(owner, pd.DataFrame(self))
+        _append_log_messages(owner, [_format_log_message(label, f"'{key}' removed")])
+
+
+def _logged_frame(df: pd.DataFrame, owner, label: str) -> "_LoggingDataFrame":
+    out = _LoggingDataFrame(df.copy())
+    object.__setattr__(out, "_owner", owner)
+    object.__setattr__(out, "_label", label)
+    return out
+
 class _LoggingProxy:
     """
     Transparent proxy for dict-like AnnData components (layers, obsm, varm, ...).
@@ -270,19 +310,19 @@ class LoggedAnnDataStandalone(ad.AnnData):
 
     @property
     def obs(self):
-        return _LoggingProxy(super().obs, self, "obs")
+        return _logged_frame(ad.AnnData.obs.fget(self), self, "obs")
 
     @obs.setter
     def obs(self, value):
-        _parent_set(self, "obs", value)
+        ad.AnnData.obs.fset(self, pd.DataFrame(value) if isinstance(value, _LoggingDataFrame) else value)
 
     @property
     def var(self):
-        return _LoggingProxy(super().var, self, "var")
+        return _logged_frame(ad.AnnData.var.fget(self), self, "var")
 
     @var.setter
     def var(self, value):
-        ad.AnnData.var.fset(self, value)
+        ad.AnnData.var.fset(self, pd.DataFrame(value) if isinstance(value, _LoggingDataFrame) else value)
 
     def _unwrap(self) -> ad.AnnData:
         """Plain AnnData view of the real underlying data, without the logging proxies.
@@ -323,8 +363,13 @@ class LoggedAnnDataStandalone(ad.AnnData):
         return AnnDataSnapshot.from_anndata(self)
 
     def __getitem__(self, index):
+        from anndata.acc import AdRef, RefAcc
+        if isinstance(index, (AdRef, RefAcc)):
+            return super().__getitem__(index)   # returns a column array, not an AnnData
         pre = self._snapshot()
         result = super().__getitem__(index)
+        if not isinstance(result, ad.AnnData):
+            return result
         logged_result = self.from_anndata(result)
         msgs = _subset_messages(pre, logged_result._snapshot(), operation="subset")
         _inherit_and_append(self, logged_result, msgs)
